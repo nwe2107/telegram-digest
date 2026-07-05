@@ -8,7 +8,8 @@ import os
 import smtplib
 import sys
 from datetime import datetime, timedelta, timezone
-from email.mime.text import MIMEText
+from email.message import EmailMessage
+from email.utils import make_msgid
 from pathlib import Path
 
 from telethon.sync import TelegramClient
@@ -31,17 +32,29 @@ with TelegramClient("digest", int(os.environ["TG_API_ID"]), os.environ["TG_API_H
         messages = client.iter_messages(
             group_id, reverse=True, offset_date=datetime.now(timezone.utc) - timedelta(days=7)
         )
+    images = []  # (cid, jpeg bytes)
+    photo_bytes = 0
     for msg in messages:
         new_last_id = max(new_last_id, msg.id)
-        text = msg.text or "[media/no text]"
+        text = msg.text or ("" if msg.photo else "[media/no text]")
         sender = msg.sender
         name = (getattr(sender, "first_name", None) or getattr(sender, "title", None) or "Unknown")
         if getattr(sender, "last_name", None):
             name += f" {sender.last_name}"
+        img_tag = ""
+        if msg.photo:
+            # ponytail: 15MB total cap keeps us under Gmail's 25MB limit; photos only, no video/docs
+            if photo_bytes < 15_000_000 and (data := client.download_media(msg, file=bytes)):
+                cid = make_msgid()[1:-1]
+                images.append((cid, data))
+                photo_bytes += len(data)
+                img_tag = f"<br><img src='cid:{cid}' style='max-width:480px'>"
+            else:
+                img_tag = "<br>[photo omitted]"
         rows.append(
             f"<p><b>{html.escape(name)}</b> "
             f"<span style='color:#888'>{msg.date:%Y-%m-%d %H:%M} UTC</span><br>"
-            f"{html.escape(text).replace(chr(10), '<br>')}</p>"
+            f"{html.escape(text).replace(chr(10), '<br>')}{img_tag}</p>"
         )
 
 if not rows:
@@ -49,10 +62,13 @@ if not rows:
     sys.exit(0)
 
 body = f"<html><body><h2>Telegram digest — {len(rows)} messages</h2>{''.join(rows)}</body></html>"
-mail = MIMEText(body, "html", "utf-8")
+mail = EmailMessage()
 mail["Subject"] = f"Telegram digest {datetime.now():%Y-%m-%d} ({len(rows)} messages)"
 mail["From"] = gmail
 mail["To"] = gmail
+mail.add_alternative(body, subtype="html")
+for cid, data in images:
+    mail.get_payload()[0].add_related(data, maintype="image", subtype="jpeg", cid=f"<{cid}>")
 
 with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
     smtp.login(gmail, app_password)
