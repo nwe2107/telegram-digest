@@ -2,7 +2,7 @@ name: Weekly digest
 
 on:
   schedule:
-    - cron: "0 8 * * 1" # Mondays 08:00 UTC
+    - cron: "0 5 * * 5" # Fridays 05:00 UTC = 8am Israel summer / 7am winter
   workflow_dispatch:
 
 permissions:
